@@ -1,0 +1,31 @@
+{
+  "version": 2,
+  "created_at": "2026-04-19T20:21:37.748529",
+  "feature_list": [
+    "total_amount_usd",
+    "amount_to_avg_ratio",
+    "seniority",
+    "time_since_last_payment",
+    "time_to_complete_payment",
+    "same_amount_count_24h",
+    "is_same_as_prev_amount",
+    "is_impossible_travel",
+    "is_suspicious_velocity",
+    "is_broken_record",
+    "is_us_transaction",
+    "is_new_user",
+    "geo_location",
+    "payment_instrument",
+    "device_type",
+    "currency",
+    "merchant_id",
+    "hour"
+  ],
+  "calibrator_bounds": {
+    "if_min": -0.07489444922488164,
+    "if_max": 0.18836239528364185,
+    "lof_min": -128.9979614435489,
+    "lof_max": 1.4868696545225117
+  },
+  "training_rows": 33056
+}
