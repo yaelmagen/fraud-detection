@@ -25,17 +25,34 @@ class Explainer:
         self._shap_explainer: Optional[shap.Explainer] = None
 
     # ------------------------------------------------------------------
-    def build(self, background_sample: pd.DataFrame) -> "Explainer":
+    def load_pretrained(self, explainer_path: str = "shap_explainer.pkl") -> "Explainer":
         """
-        Initialize the SHAP explainer with a small background dataset
-        (sampled from training data).
+        Load a pre-fitted SHAP explainer from disk.
+        
+        Args:
+            explainer_path: Path to the serialized SHAP explainer
         """
-        X_bg = background_sample[FINAL_FEATURES].copy()
-        for col in ["merchant_id", "geo_location", "payment_instrument",
-                     "device_type", "currency"]:
-            X_bg[col] = X_bg[col].astype("category")
+        import joblib
+        self._shap_explainer = joblib.load(explainer_path)
+        return self
 
-        X_proc = self.ensemble.preprocessor.transform(X_bg)
+    # ------------------------------------------------------------------
+    def build(self, background_sample: pd.DataFrame, already_processed: bool = False) -> "Explainer":
+        """
+        Initialize the SHAP explainer with a background dataset.
+        
+        Args:
+            background_sample: Background data for SHAP
+            already_processed: If True, background_sample is already preprocessed
+        """
+        if already_processed:
+            X_proc = background_sample
+        else:
+            X_bg = background_sample[FINAL_FEATURES].copy()
+            for col in ["merchant_id", "geo_location", "payment_instrument",
+                         "device_type", "currency"]:
+                X_bg[col] = X_bg[col].astype("category")
+            X_proc = self.ensemble.preprocessor.transform(X_bg)
 
         self._shap_explainer = shap.Explainer(
             self.ensemble.iso_forest,
@@ -166,9 +183,11 @@ def _approve_reasons(
 
     if features.get("is_new_user", 0) == 0:
         seniority = features.get("seniority", 0)
+        # Note: The actual risk impact of seniority (positive/negative) 
+        # should be interpreted from the SHAP plot for this specific transaction
         reasons.append(
-            f"✅ **Established User** — Account seniority of "
-            f"**{seniority} days** with prior transaction history."
+            f"**Established User** Account has **{seniority} days** of "
+            f"transaction history for behavioral context."
         )
 
     if (features.get("is_impossible_travel", 0) == 0

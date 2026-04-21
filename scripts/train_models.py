@@ -33,10 +33,10 @@ WARMUP_RATIO = 0.80
 def load_and_engineer(path: str) -> pd.DataFrame:
     """Load raw data and apply full feature engineering."""
     df = pd.read_excel(path)
-    df["payment_timestamp"] = pd.to_datetime(df["payment_timestamp"])
+    df["payment_timestamp"] = pd.to_datetime(df["payment_timestamp"]).dt.floor('s')
     df["first_approved_payment_timestamp"] = pd.to_datetime(
         df["first_approved_payment_timestamp"]
-    )
+    ).dt.floor('s')
     df = df.sort_values("payment_timestamp").reset_index(drop=True)
 
     df["region"] = df["country"].apply(get_region)

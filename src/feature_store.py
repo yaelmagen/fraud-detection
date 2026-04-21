@@ -59,7 +59,7 @@ class FeatureStore:
                 "txn_count": len(group),
                 "amount_sum": float(np.sum(amounts)),
                 "amount_avg": float(np.mean(amounts)),
-                "last_timestamp": pd.Timestamp(last_row["payment_timestamp"]),
+                "last_timestamp": pd.Timestamp(last_row["payment_timestamp"]).floor('s'),
                 "last_country": last_row.get("country", None),
                 "last_state": last_row.get("state", None),
                 "last_region": last_row.get("region", None),
@@ -86,7 +86,7 @@ class FeatureStore:
         )
 
         uid = txn["user_id"]
-        ts = pd.Timestamp(txn["payment_timestamp"])
+        ts = pd.Timestamp(txn["payment_timestamp"]).floor('s')
         amount = float(txn["total_amount_usd"])
         country = txn.get("country", None)
         state = txn.get("state", None)
@@ -105,7 +105,7 @@ class FeatureStore:
             # Update 24h rolling window – prune entries older than 48h
             cutoff = ts - pd.Timedelta(hours=48)
             cache["amounts_24h"] = [
-                (t, a) for t, a in cache["amounts_24h"] if pd.Timestamp(t) >= cutoff
+                (t, a) for t, a in cache["amounts_24h"] if pd.Timestamp(t).floor('s') >= cutoff
             ]
             cache["amounts_24h"].append((ts, amount))
         else:

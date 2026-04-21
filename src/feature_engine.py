@@ -81,7 +81,7 @@ def compute_features(
     Returns a dict of feature_name -> value, matching `final_features`
     used during model training.
     """
-    ts = pd.Timestamp(txn["payment_timestamp"])
+    ts = pd.Timestamp(txn["payment_timestamp"]).floor('s')
     amount = float(txn["total_amount_usd"])
     country = str(txn["country"])
     state = txn.get("state", None)
@@ -89,7 +89,7 @@ def compute_features(
     instrument = txn.get("payment_instrument", None)
     currency = str(txn["currency"])
     merchant = txn["merchant_id"]
-    first_approved = pd.Timestamp(txn["first_approved_payment_timestamp"])
+    first_approved = pd.Timestamp(txn["first_approved_payment_timestamp"]).floor('s')
 
     region = get_region(country)
     geo_location = get_geo_location(country, state)
@@ -114,7 +114,7 @@ def compute_features(
             amount_to_avg_ratio = 1.0
 
         # time_since_last_payment (hours)
-        last_ts = pd.Timestamp(user_state["last_timestamp"])
+        last_ts = pd.Timestamp(user_state["last_timestamp"]).floor('s')
         delta_seconds = (ts - last_ts).total_seconds()
         time_since_last_payment = delta_seconds / 3600.0
 
@@ -123,7 +123,7 @@ def compute_features(
         same_count = sum(
             1
             for t, a in user_state["amounts_24h"]
-            if pd.Timestamp(t) >= cutoff_24h and pd.Timestamp(t) < ts and a == amount
+            if pd.Timestamp(t).floor('s') >= cutoff_24h and pd.Timestamp(t).floor('s') < ts and a == amount
         )
         same_amount_count_24h = float(same_count)
 
@@ -154,10 +154,12 @@ def compute_features(
     # Seniority (days)
     seniority = (ts - first_approved).days
 
-    # Broken record flag (notebook: only device_type == 'Unknown')
+    # Broken record flag (either device or payment instrument is missing)
     is_broken_record = int(
         pd.isna(device) or str(device).strip() == ""
         or device == "Unknown"
+        or pd.isna(instrument) or str(instrument).strip() == ""
+        or instrument == "Unknown"
     )
 
     # Handle missing categorical values

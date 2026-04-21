@@ -18,6 +18,7 @@ never overwritten.
 import os
 import re
 import json
+import pickle
 import joblib
 from datetime import datetime
 from typing import Dict, Any, Optional, List, Tuple
@@ -140,12 +141,20 @@ def load_model(version: Optional[int] = None) -> Tuple[Any, Any, Any, Any, Dict[
     """
     paths = get_paths(version)
 
-    iso_forest = joblib.load(paths["iso_forest"])
-    lof = joblib.load(paths["lof"])
-    preprocessor = joblib.load(paths["preprocessor"])
-    scaler = joblib.load(paths["scaler"])
+    try:
+        iso_forest = joblib.load(paths["iso_forest"])
+        lof = joblib.load(paths["lof"])
+        preprocessor = joblib.load(paths["preprocessor"])
+        scaler = joblib.load(paths["scaler"])
 
-    with open(paths["metadata"], "r") as f:
-        metadata = json.load(f)
+        with open(paths["metadata"], "r") as f:
+            metadata = json.load(f)
 
-    return iso_forest, lof, preprocessor, scaler, metadata
+        return iso_forest, lof, preprocessor, scaler, metadata
+    except (KeyError, pickle.PickleError, EOFError, AttributeError) as e:
+        raise RuntimeError(
+            f"Failed to load model version {version}. This is likely due to a "
+            f"pickle compatibility issue between different Python/scikit-learn versions. "
+            f"Please retrain the models using 'python scripts/train_models.py'. "
+            f"Original error: {e}"
+        )

@@ -51,7 +51,7 @@ XLSX_PATH = os.path.join(DATA_DIR, "DS_Test_Dataset.xlsx")
 HISTORY_PATH = os.path.join(DATA_DIR, "history.csv")
 FEEDBACK_PATH = os.path.join(DATA_DIR, "feedback.csv")
 
-WARMUP_RATIO = 0.80  # first 80% for warm-up / training
+WARMUP_RATIO = 0.64  # 64% for training based on drift analysis
 
 
 # ======================================================================
@@ -60,10 +60,10 @@ WARMUP_RATIO = 0.80  # first 80% for warm-up / training
 @st.cache_data(show_spinner="Loading dataset …")
 def load_raw_data():
     df = pd.read_excel(XLSX_PATH)
-    df["payment_timestamp"] = pd.to_datetime(df["payment_timestamp"])
+    df["payment_timestamp"] = pd.to_datetime(df["payment_timestamp"]).dt.floor('s')
     df["first_approved_payment_timestamp"] = pd.to_datetime(
         df["first_approved_payment_timestamp"]
-    )
+    ).dt.floor('s')
     df = df.sort_values("payment_timestamp").reset_index(drop=True)
 
     # --- Feature engineering (same as notebook) ---
@@ -162,6 +162,12 @@ def load_pretrained_system(_version_key: int):
     split_idx = int(len(raw) * WARMUP_RATIO)
     warmup_df = raw.iloc[:split_idx].copy()
     live_df = raw.iloc[split_idx:].copy().reset_index(drop=True)
+    
+    # Start simulation from 201st test row (after warmup + 200 buffer)
+    simulation_start_idx = split_idx + 200
+    if simulation_start_idx < len(live_df):
+        live_df = live_df.iloc[simulation_start_idx - split_idx:].reset_index(drop=True)
+        st.session_state.txn_idx = 0  # Reset to start from new position
 
     # Feature Store (warm-up data only)
     store = FeatureStore(HISTORY_PATH)
@@ -179,10 +185,16 @@ def load_pretrained_system(_version_key: int):
     calibrator.lof_min = cb["lof_min"]
     calibrator.lof_max = cb["lof_max"]
 
-    # SHAP explainer
-    bg_sample = warmup_df.sample(n=min(200, len(warmup_df)), random_state=42)
+    # SHAP explainer - load pre-fitted explainer for consistency
     explainer = Explainer(ensemble)
-    explainer.build(bg_sample)
+    try:
+        explainer.load_pretrained("shap_explainer.pkl")
+    except (FileNotFoundError, KeyError, Exception) as e:
+        # Fallback to dynamic explainer if pre-fitted not available or incompatible
+        print(f"SHAP explainer loading failed: {e}. Using dynamic explainer.")
+        bg_sample = warmup_df.sample(n=min(200, len(warmup_df)), random_state=42)
+        bg_processed = ensemble.preprocessor.transform(bg_sample[FINAL_FEATURES])
+        explainer.build(bg_processed, already_processed=True)
 
     return store, ensemble, calibrator, explainer, live_df, warmup_df
 
@@ -332,9 +344,26 @@ def main():
         )
         st.stop()
 
-    store, ensemble, calibrator, explainer, live_df, warmup_df = (
-        load_pretrained_system(st.session_state.model_version_key)
-    )
+    try:
+        store, ensemble, calibrator, explainer, live_df, warmup_df = (
+            load_pretrained_system(st.session_state.model_version_key)
+        )
+    except RuntimeError as e:
+        st.error("Model Loading Error")
+        st.error(str(e))
+        st.markdown("""
+        ### Solution: Retrain Models
+        
+        The existing model files are incompatible with the current Python/scikit-learn version.
+        Please run the following command to generate fresh, compatible models:
+        
+        ```bash
+        python scripts/train_models.py
+        ```
+        
+        After retraining, refresh this page to continue.
+        """)
+        st.stop()
 
     # ------------------------------------------------------------------
     # Header
