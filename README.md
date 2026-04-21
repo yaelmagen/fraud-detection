@@ -31,9 +31,12 @@ fraud-detection/
 │   ├── retrain_trigger.json    # Drift / retrain signal
 │   ├── history.csv             # Auto-generated transaction history
 │   └── feedback.csv            # Analyst feedback log
+├── export_shap_explainer.py    # SHAP explainer export with 64% split
+├── shap_explainer.pkl          # Pre-fitted SHAP explainer (research-to-production)
+├── pipeline.pkl                # Exported pipeline reference
 ├── Nuvei_fraud.ipynb           # Original EDA & model selection notebook
 ├── requirements.txt
-└── README.md
+└── readme.md
 ```
 
 ---
@@ -46,7 +49,7 @@ The system combines **three complementary perspectives** into a unified risk sco
 |-------|--------|---------|
 | **Isolation Forest** | 70% | Detects *global* behavioral outliers — extreme transaction amounts, velocity bursts, seniority-based anomalies. |
 | **Local Outlier Factor (LOF)** | 30% | Catches *local density* anomalies — "silent" deviations invisible to the global model (e.g., high-value transactions in rare geo-merchant combinations). |
-| **Deterministic Rules** | Override | Hard flags for Impossible Travel, Suspicious Velocity, Same-Amount Bursts, and Broken Records. When triggered, the risk floor is set to 0.85 (guaranteed **Block**). |
+| **Deterministic Rules** | Override | Hard flags for Impossible Travel, Suspicious Velocity, Same-Amount Bursts, and Broken Records. When triggered, risk floor is set to 0.85 (guaranteed **Block**). |
 
 ### Decision Thresholds
 
@@ -78,7 +81,7 @@ New users with no transaction history receive **safe neutral defaults**:
 | New attack vectors | Requires retraining | Rule layer can be updated instantly |
 | Nuanced silent anomalies | IF can miss local deviations | LOF provides a complementary "local lens" |
 
-The combination ensures **no single blind spot**: rules handle clear logical violations with zero latency, while the ML ensemble captures statistical anomalies that no finite rule set could enumerate.
+The combination ensures **no single blind spot**: rules handle clear logical violations with zero latency, while as ML ensemble captures statistical anomalies that no finite rule set could enumerate.
 
 ---
 
@@ -91,12 +94,13 @@ python3 -m venv .venv && source .venv/bin/activate
 # 2. Install dependencies
 pip install -r requirements.txt
 
-# 3. Train initial models (creates models/v1)
-python scripts/train_models.py
-
-# 4. Run the app
+# 3. Run the app (pre-trained models included)
 streamlit run app/streamlit_app.py
 ```
+
+**Note**: Pre-trained model files are included in the `models/` directory, so no training is required for initial setup. The app includes a fallback mechanism that creates SHAP explainers dynamically if the pre-fitted explainer (`shap_explainer.pkl`) is not available.
+
+**Optional**: For optimal SHAP consistency with the 64% split strategy, you can run `python export_shap_explainer.py` before starting the app. This creates a pre-fitted explainer with the modern distribution baseline, but the app will work fine without it.
 
 ---
 
@@ -110,22 +114,36 @@ streamlit run app/streamlit_app.py
 └─────────────┘       └──────────────┘       └─────────────────┘
 ```
 
-1. **Offline training** — Models are trained in the notebook or via `python scripts/train_models.py`. Training uses the first 80% of the dataset (sorted chronologically).
+1. **Offline training** — Models are trained in the notebook or via `python scripts/train_models.py`. Training uses the first 64% of the dataset (sorted chronologically) based on drift analysis.
 2. **Versioned persistence** — Each training run saves a new version (`v1`, `v2`, …) under `models/`. Existing versions are never overwritten. Each version includes: Isolation Forest, LOF, preprocessor, scaler, and a `metadata_vN.json` with the feature list and calibrator bounds.
-3. **Fast inference** — On app startup the latest pretrained version is loaded from disk via `joblib`. No training occurs at launch.
-4. **Manual retraining** — The sidebar **🔄 Retrain Models** button trains a new version on the warm-up data, saves it, and hot-reloads it into the session.
+3. **Fast inference** — On app startup, the latest pretrained version is loaded from disk via `joblib`. No training occurs at launch.
+4. **Manual retraining** — The sidebar **🔄 Retrain Models** button trains a new version on warm-up data, saves it, and hot-reloads it into the session.
 5. **Drift detection** — A lightweight heuristic (`src/drift.py`) compares the live stream's average amount and top-5 country distribution against the training baseline every 10 transactions. When drift is detected, `data/retrain_trigger.json` is updated and a warning appears in the sidebar.
 
 ---
 
 ## Real-Time Simulation
 
-The app simulates real-time scoring with an **80/20 chronological split**:
+The app simulates real-time scoring with an **64/36 chronological split**:
 
-- **First 80%** — Used as warm-up data to bootstrap the feature store (user-level aggregate cache) and to train models offline.
-- **Last 20%** — Treated as the "live stream". Each click of **Process Next** takes the next chronological row, computes point-in-time features from the feature store (no leakage), scores it through the pretrained ensemble, and appends it to history.
+- **First 64%** — Used as warm-up data to bootstrap the feature store (user-level aggregate cache) and to train models offline.
+- **Next 200 rows** — SHAP buffer for explainer background (modern distribution baseline)
+- **Remaining rows** — Treated as a "live stream". Each click of **Process Next** takes the next chronological row, computes point-in-time features from the feature store (no leakage), scores it through the pretrained ensemble, and appends it to history.
 
-This split matches the training data boundary exactly, ensuring consistency between offline training and online inference.
+This split ensures a stable training base while maintaining ~10% new users in the test set, with SHAP explanations aligned to current user behavior patterns.
+
+---
+
+## SHAP Explainer Export
+
+The `export_shap_explainer.py` script implements the finalized data split strategy:
+
+1. **64% Training Set** — Chronological split for stable model training
+2. **200-Row SHAP Buffer** — Extracted from test set for modern distribution baseline
+3. **Pre-fitted Explainer** — Saved as `shap_explainer.pkl` for research-to-production consistency
+4. **History Integration** — SHAP buffer rows added to `history.csv` for simulation continuity
+
+This ensures consistent SHAP explanations between the notebook research and Streamlit production environments.
 
 ---
 
@@ -157,5 +175,5 @@ Cached user-level aggregates: `txn_count`, `amount_avg`, `amount_sum`, `last_tim
 | **Pretrained models (no auto-train on start)** | Mirrors production: training is expensive and should be deliberate. App startup is fast (~2 s for model load vs ~30 s for training). |
 | **Manual retraining** | In a demo context, retraining should be an explicit analyst action so the user can observe version increments and drift signals. |
 | **Versioned artifacts** | Enables rollback, A/B comparison, and audit trails — standard MLOps practice. |
-| **80/20 split** | Provides enough training data for stable models while leaving a meaningful live stream for demonstration. |
+| **64/36 split with SHAP buffer** | Provides stable training base, maintains realistic new user percentage, and ensures SHAP consistency between research and production. |
 | **Drift detection as a heuristic** | Full statistical tests (KS, PSI) are overkill for a simulation. A simple mean-shift + distribution-change check demonstrates the concept cleanly. |
