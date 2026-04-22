@@ -1,5 +1,5 @@
 {
   "retrain_required": true,
-  "reason": "Average amount shifted 248% (train=355.04, recent=1235.20). | Top-5 country distribution diverged (Jaccard=0.75).",
-  "last_checked": "2026-04-19T20:28:41.259319"
+  "reason": "Average amount shifted 21% (train=334.49, recent=403.44). | Top-5 country distribution diverged (Jaccard=0.57).",
+  "last_checked": "2026-04-22T20:37:03.953789"
 }

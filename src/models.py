@@ -30,15 +30,20 @@ from src import model_registry
 # ------------------------------------------------------------------
 # Hour cyclical encoding (same as notebook)
 # ------------------------------------------------------------------
-def _sin_cos_encode(df):
+def sin_cos_encode(df):
     hours = df.values.flatten() if hasattr(df, "values") else df.flatten()
     sin_hour = np.sin(2 * np.pi * hours / 24)
     cos_hour = np.cos(2 * np.pi * hours / 24)
     return np.column_stack([sin_hour, cos_hour])
 
 
-def _get_hour_names(transformer, input_features):
+def get_hour_names(transformer, input_features):
     return ["hour_sin", "hour_cos"]
+
+
+# Keep private aliases for internal use
+_sin_cos_encode = sin_cos_encode
+_get_hour_names = get_hour_names
 
 
 # ------------------------------------------------------------------

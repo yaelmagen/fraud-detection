@@ -1,6 +1,11 @@
 """
-Offline training script — trains the ensemble on the warm-up portion
-of the dataset and saves versioned model artifacts to ``models/``.
+Offline training script — trains the ensemble using the notebook's
+data split strategy and saves versioned model artifacts to ``models/``.
+
+Split strategy (matches notebook):
+  - Last 100 rows → holdout (used as live stream in Streamlit)
+  - Remaining rows → 65% train / 35% test (chronological)
+  - SHAP explainer is built on test data
 
 Usage:
     python scripts/train_models.py
@@ -27,7 +32,8 @@ from src.feature_engine import (
 from src.models import FraudEnsemble, CAT_FEATURES
 
 XLSX_PATH = os.path.join(PROJECT_ROOT, "data", "DS_Test_Dataset.xlsx")
-WARMUP_RATIO = 0.80
+TRAIN_RATIO = 0.65
+HOLDOUT_SIZE = 100
 
 
 def load_and_engineer(path: str) -> pd.DataFrame:
@@ -123,17 +129,25 @@ def load_and_engineer(path: str) -> pd.DataFrame:
 def main():
     print("Loading and engineering features …")
     df = load_and_engineer(XLSX_PATH)
-    split_idx = int(len(df) * WARMUP_RATIO)
-    warmup_df = df.iloc[:split_idx].copy()
+
+    # Split: holdout last 100, then 65/35 train/test on remainder
+    holdout_df = df.iloc[-HOLDOUT_SIZE:].copy()
+    remaining = df.iloc[:-HOLDOUT_SIZE]
+    train_size = int(len(remaining) * TRAIN_RATIO)
+    train_df = remaining.iloc[:train_size].copy()
+    test_df = remaining.iloc[train_size:].copy()
+
     print(f"  Total rows : {len(df)}")
-    print(f"  Training   : {len(warmup_df)} ({WARMUP_RATIO:.0%})")
+    print(f"  Train      : {len(train_df)} ({TRAIN_RATIO:.0%})")
+    print(f"  Test       : {len(test_df)}")
+    print(f"  Holdout    : {len(holdout_df)}")
 
     print("Training ensemble …")
     ensemble = FraudEnsemble()
-    ensemble.fit(warmup_df)
+    ensemble.fit(train_df)
 
-    print("Computing calibration scores …")
-    X = warmup_df[FINAL_FEATURES].copy()
+    print("Computing calibration scores on training data …")
+    X = train_df[FINAL_FEATURES].copy()
     for col in CAT_FEATURES:
         X[col] = X[col].astype("category")
     X_proc = ensemble.preprocessor.transform(X)
@@ -152,7 +166,7 @@ def main():
     print("Saving model artifacts …")
     ver = ensemble.save(
         calibrator_bounds=calibrator_bounds,
-        training_rows=len(warmup_df),
+        training_rows=len(train_df),
     )
     print(f"  Saved as v{ver}")
     print("Done.")

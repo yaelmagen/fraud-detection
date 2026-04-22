@@ -31,9 +31,6 @@ fraud-detection/
 │   ├── retrain_trigger.json    # Drift / retrain signal
 │   ├── history.csv             # Auto-generated transaction history
 │   └── feedback.csv            # Analyst feedback log
-├── export_shap_explainer.py    # SHAP explainer export with 64% split
-├── shap_explainer.pkl          # Pre-fitted SHAP explainer (research-to-production)
-├── pipeline.pkl                # Exported pipeline reference
 ├── Nuvei_fraud.ipynb           # Original EDA & model selection notebook
 ├── requirements.txt
 └── readme.md
@@ -88,7 +85,7 @@ The combination ensures **no single blind spot**: rules handle clear logical vio
 ## Quick Start
 
 ```bash
-# 1. Create virtual environment
+# 1. Create virtual environment (Python 3.10+ required)
 python3 -m venv .venv && source .venv/bin/activate
 
 # 2. Install dependencies
@@ -98,9 +95,7 @@ pip install -r requirements.txt
 streamlit run app/streamlit_app.py
 ```
 
-**Note**: Pre-trained model files are included in the `models/` directory, so no training is required for initial setup. The app includes a fallback mechanism that creates SHAP explainers dynamically if the pre-fitted explainer (`shap_explainer.pkl`) is not available.
-
-**Optional**: For optimal SHAP consistency with the 64% split strategy, you can run `python export_shap_explainer.py` before starting the app. This creates a pre-fitted explainer with the modern distribution baseline, but the app will work fine without it.
+**Note**: Pre-trained model files are included in the `models/` directory, so no training is required for initial setup. The SHAP explainer is built dynamically from the test set at app startup, matching the notebook's approach.
 
 ---
 
@@ -114,7 +109,7 @@ streamlit run app/streamlit_app.py
 └─────────────┘       └──────────────┘       └─────────────────┘
 ```
 
-1. **Offline training** — Models are trained in the notebook or via `python scripts/train_models.py`. Training uses the first 64% of the dataset (sorted chronologically) based on drift analysis.
+1. **Offline training** — Models are trained in the notebook or via `python scripts/train_models.py`. The last 100 rows are held out, then the remaining data is split 65/35 (train/test) chronologically.
 2. **Versioned persistence** — Each training run saves a new version (`v1`, `v2`, …) under `models/`. Existing versions are never overwritten. Each version includes: Isolation Forest, LOF, preprocessor, scaler, and a `metadata_vN.json` with the feature list and calibrator bounds.
 3. **Fast inference** — On app startup, the latest pretrained version is loaded from disk via `joblib`. No training occurs at launch.
 4. **Manual retraining** — The sidebar **🔄 Retrain Models** button trains a new version on warm-up data, saves it, and hot-reloads it into the session.
@@ -124,26 +119,15 @@ streamlit run app/streamlit_app.py
 
 ## Real-Time Simulation
 
-The app simulates real-time scoring with an **64/36 chronological split**:
+The app simulates real-time scoring with a **holdout-based split** that mirrors the notebook:
 
-- **First 64%** — Used as warm-up data to bootstrap the feature store (user-level aggregate cache) and to train models offline.
-- **Next 200 rows** — SHAP buffer for explainer background (modern distribution baseline)
-- **Remaining rows** — Treated as a "live stream". Each click of **Process Next** takes the next chronological row, computes point-in-time features from the feature store (no leakage), scores it through the pretrained ensemble, and appends it to history.
+1. **Last 100 rows** — Held out as the "live stream" for simulation.
+2. **Remaining data** — Split chronologically into **65% train / 35% test**.
+   - **Train set** — Used to fit the ensemble (Isolation Forest + LOF) and bootstrap the feature store.
+   - **Test set** — Used as background data for the SHAP explainer, matching the notebook's approach.
+3. **Feature store** — Bootstrapped with all pre-holdout data (train + test) so the simulation starts with full user history context.
 
-This split ensures a stable training base while maintaining ~10% new users in the test set, with SHAP explanations aligned to current user behavior patterns.
-
----
-
-## SHAP Explainer Export
-
-The `export_shap_explainer.py` script implements the finalized data split strategy:
-
-1. **64% Training Set** — Chronological split for stable model training
-2. **200-Row SHAP Buffer** — Extracted from test set for modern distribution baseline
-3. **Pre-fitted Explainer** — Saved as `shap_explainer.pkl` for research-to-production consistency
-4. **History Integration** — SHAP buffer rows added to `history.csv` for simulation continuity
-
-This ensures consistent SHAP explanations between the notebook research and Streamlit production environments.
+Each click of **Process Next** takes the next chronological holdout row, computes point-in-time features from the feature store (no leakage), scores it through the pretrained ensemble, and appends it to history.
 
 ---
 
@@ -175,5 +159,5 @@ Cached user-level aggregates: `txn_count`, `amount_avg`, `amount_sum`, `last_tim
 | **Pretrained models (no auto-train on start)** | Mirrors production: training is expensive and should be deliberate. App startup is fast (~2 s for model load vs ~30 s for training). |
 | **Manual retraining** | In a demo context, retraining should be an explicit analyst action so the user can observe version increments and drift signals. |
 | **Versioned artifacts** | Enables rollback, A/B comparison, and audit trails — standard MLOps practice. |
-| **64/36 split with SHAP buffer** | Provides stable training base, maintains realistic new user percentage, and ensures SHAP consistency between research and production. |
+| **Holdout split (last 100 / 65-35 train-test)** | Matches notebook exactly. Test set provides SHAP background, holdout simulates unseen live traffic. |
 | **Drift detection as a heuristic** | Full statistical tests (KS, PSI) are overkill for a simulation. A simple mean-shift + distribution-change check demonstrates the concept cleanly. |

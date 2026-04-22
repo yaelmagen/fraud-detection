@@ -7,7 +7,7 @@ processed, scored, explained, and stored in a dynamic history.
 Key lifecycle:
   - Models are loaded from pretrained artifacts (models/ directory)
   - Retraining is manual, triggered from the sidebar
-  - 80/20 split: first 80% for warm-up / training, last 20% for simulation
+  - Split: last 100 rows as live stream, remaining 65/35 train/test
 
 Usage:
     streamlit run app/streamlit_app.py
@@ -51,7 +51,8 @@ XLSX_PATH = os.path.join(DATA_DIR, "DS_Test_Dataset.xlsx")
 HISTORY_PATH = os.path.join(DATA_DIR, "history.csv")
 FEEDBACK_PATH = os.path.join(DATA_DIR, "feedback.csv")
 
-WARMUP_RATIO = 0.64  # 64% for training based on drift analysis
+TRAIN_RATIO = 0.65
+HOLDOUT_SIZE = 100
 
 
 # ======================================================================
@@ -155,23 +156,30 @@ def load_raw_data():
 def load_pretrained_system(_version_key: int):
     """Load pretrained models + bootstrap feature store.
 
+    Split strategy (matches notebook):
+      - Last 100 rows → holdout (live stream for simulation)
+      - Remaining → 65% train / 35% test
+      - SHAP explainer built on test data
+      - Feature store bootstrapped with train + test data
+
     ``_version_key`` is used as a cache key so the resource is
     reloaded when the version changes (e.g. after retraining).
     """
     raw = load_raw_data()
-    split_idx = int(len(raw) * WARMUP_RATIO)
-    warmup_df = raw.iloc[:split_idx].copy()
-    live_df = raw.iloc[split_idx:].copy().reset_index(drop=True)
-    
-    # Start simulation from 201st test row (after warmup + 200 buffer)
-    simulation_start_idx = split_idx + 200
-    if simulation_start_idx < len(live_df):
-        live_df = live_df.iloc[simulation_start_idx - split_idx:].reset_index(drop=True)
-        st.session_state.txn_idx = 0  # Reset to start from new position
 
-    # Feature Store (warm-up data only)
+    # Split: holdout last 100, then 65/35 train/test on remainder
+    holdout_df = raw.iloc[-HOLDOUT_SIZE:].copy().reset_index(drop=True)
+    remaining = raw.iloc[:-HOLDOUT_SIZE]
+    train_size = int(len(remaining) * TRAIN_RATIO)
+    train_df = remaining.iloc[:train_size].copy()
+    test_df = remaining.iloc[train_size:].copy()
+
+    # Live stream = holdout (last 100 rows)
+    live_df = holdout_df
+
+    # Feature Store — bootstrap with train + test data (everything before holdout)
     store = FeatureStore(HISTORY_PATH)
-    store.bootstrap(warmup_df)
+    store.bootstrap(remaining)
 
     # Load pretrained ensemble
     ensemble = FraudEnsemble.from_pretrained()
@@ -185,18 +193,13 @@ def load_pretrained_system(_version_key: int):
     calibrator.lof_min = cb["lof_min"]
     calibrator.lof_max = cb["lof_max"]
 
-    # SHAP explainer - load pre-fitted explainer for consistency
+    # SHAP explainer — built on test data (matches notebook)
     explainer = Explainer(ensemble)
-    try:
-        explainer.load_pretrained("shap_explainer.pkl")
-    except (FileNotFoundError, KeyError, Exception) as e:
-        # Fallback to dynamic explainer if pre-fitted not available or incompatible
-        print(f"SHAP explainer loading failed: {e}. Using dynamic explainer.")
-        bg_sample = warmup_df.sample(n=min(200, len(warmup_df)), random_state=42)
-        bg_processed = ensemble.preprocessor.transform(bg_sample[FINAL_FEATURES])
-        explainer.build(bg_processed, already_processed=True)
+    bg_sample = test_df.sample(n=min(200, len(test_df)), random_state=42)
+    bg_processed = ensemble.preprocessor.transform(bg_sample[FINAL_FEATURES])
+    explainer.build(bg_processed, already_processed=True)
 
-    return store, ensemble, calibrator, explainer, live_df, warmup_df
+    return store, ensemble, calibrator, explainer, live_df, train_df
 
 
 # ======================================================================
@@ -307,9 +310,10 @@ def main():
         if st.button("🔄 Retrain Models", use_container_width=True):
             with st.spinner("Retraining … this may take a minute."):
                 raw = load_raw_data()
-                split_idx = int(len(raw) * WARMUP_RATIO)
-                warmup_df = raw.iloc[:split_idx].copy()
-                ver = retrain_models(warmup_df)
+                remaining = raw.iloc[:-HOLDOUT_SIZE]
+                train_size = int(len(remaining) * TRAIN_RATIO)
+                train_df = remaining.iloc[:train_size].copy()
+                ver = retrain_models(train_df)
             st.session_state.model_version_key = ver
             st.session_state.txn_idx = 0
             st.session_state.scored_history = []
@@ -345,7 +349,7 @@ def main():
         st.stop()
 
     try:
-        store, ensemble, calibrator, explainer, live_df, warmup_df = (
+        store, ensemble, calibrator, explainer, live_df, train_df = (
             load_pretrained_system(st.session_state.model_version_key)
         )
     except RuntimeError as e:
@@ -447,7 +451,7 @@ def main():
     if st.session_state.txn_idx > 0 and st.session_state.txn_idx % 10 == 0:
         processed = live_df.iloc[: st.session_state.txn_idx]
         if len(processed) >= 10:
-            check_drift(warmup_df, processed)
+            check_drift(train_df, processed)
 
     # ------------------------------------------------------------------
     # Current transaction details

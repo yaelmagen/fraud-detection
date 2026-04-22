@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "created_at": "2026-04-19T20:14:59.139754",
+  "created_at": "2026-04-22T19:58:16.171464",
   "feature_list": [
     "total_amount_usd",
     "amount_to_avg_ratio",
@@ -22,10 +22,10 @@
     "hour"
   ],
   "calibrator_bounds": {
-    "if_min": -0.07489444922488164,
-    "if_max": 0.18836239528364185,
-    "lof_min": -128.9979614435489,
-    "lof_max": 1.4868696545225117
+    "if_min": -0.0970521825699101,
+    "if_max": 0.16228201086709632,
+    "lof_min": -130.07923887198527,
+    "lof_max": 1.509372772440979
   },
-  "training_rows": 33056
+  "training_rows": 26793
 }
