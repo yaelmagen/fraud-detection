@@ -153,14 +153,13 @@ def load_raw_data():
 # Load pretrained models (default path — no retraining)
 # ======================================================================
 @st.cache_resource(show_spinner="Loading pretrained models …")
-def load_pretrained_system(_version_key: int):
-    """Load pretrained models + bootstrap feature store.
+def _load_models_and_data(_version_key: int):
+    """Load pretrained models, data splits, and explainer (cached).
 
     Split strategy (matches notebook):
       - Last 100 rows → holdout (live stream for simulation)
       - Remaining → 65% train / 35% test
       - SHAP explainer built on test data
-      - Feature store bootstrapped with train + test data
 
     ``_version_key`` is used as a cache key so the resource is
     reloaded when the version changes (e.g. after retraining).
@@ -176,10 +175,6 @@ def load_pretrained_system(_version_key: int):
 
     # Live stream = holdout (last 100 rows)
     live_df = holdout_df
-
-    # Feature Store — bootstrap with train + test data (everything before holdout)
-    store = FeatureStore(HISTORY_PATH)
-    store.bootstrap(remaining)
 
     # Load pretrained ensemble
     ensemble = FraudEnsemble.from_pretrained()
@@ -199,7 +194,20 @@ def load_pretrained_system(_version_key: int):
     bg_processed = ensemble.preprocessor.transform(bg_sample[FINAL_FEATURES])
     explainer.build(bg_processed, already_processed=True)
 
-    return store, ensemble, calibrator, explainer, live_df, train_df
+    return remaining, ensemble, calibrator, explainer, live_df, train_df
+
+
+def _get_feature_store(remaining: pd.DataFrame) -> FeatureStore:
+    """Return a per-session FeatureStore, bootstrapping on first call.
+
+    Stored in st.session_state so it resets on page refresh,
+    ensuring each simulation run starts from a clean state.
+    """
+    if "feature_store" not in st.session_state:
+        store = FeatureStore(HISTORY_PATH)
+        store.bootstrap(remaining)
+        st.session_state.feature_store = store
+    return st.session_state.feature_store
 
 
 # ======================================================================
@@ -300,7 +308,8 @@ def main():
                 st.session_state.txn_idx = 0
                 st.session_state.scored_history = []
                 st.session_state.current_result = None
-                load_pretrained_system.clear()
+                st.session_state.pop("feature_store", None)
+                _load_models_and_data.clear()
                 st.success(f"Loaded **v{lv}**. Simulation reset.")
                 st.rerun()
             else:
@@ -318,7 +327,8 @@ def main():
             st.session_state.txn_idx = 0
             st.session_state.scored_history = []
             st.session_state.current_result = None
-            load_pretrained_system.clear()
+            st.session_state.pop("feature_store", None)
+            _load_models_and_data.clear()
             st.success(f"Models retrained and saved as **v{ver}**")
             st.rerun()
 
@@ -349,9 +359,10 @@ def main():
         st.stop()
 
     try:
-        store, ensemble, calibrator, explainer, live_df, train_df = (
-            load_pretrained_system(st.session_state.model_version_key)
+        remaining, ensemble, calibrator, explainer, live_df, train_df = (
+            _load_models_and_data(st.session_state.model_version_key)
         )
+        store = _get_feature_store(remaining)
     except RuntimeError as e:
         st.error("Model Loading Error")
         st.error(str(e))
